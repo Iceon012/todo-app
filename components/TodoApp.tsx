@@ -10,6 +10,8 @@ import { Trash2 } from "lucide-react"
 import { supabase } from "@/lib/supabase-client"
 import { toast, ToastContainer } from 'react-toastify'
 import 'react-toastify/dist/ReactToastify.css'
+import { User } from "@supabase/auth-helpers-nextjs"
+import { RealtimePostgresChangesPayload } from "@supabase/supabase-js"
 
 interface Todo {
     id: number
@@ -21,7 +23,7 @@ interface Todo {
 export default function TodoApp() {
     const [todos, setTodos] = useState<Todo[]>([])
     const [newTodo, setNewTodo] = useState("")
-    const [user, setUser] = useState(null)
+    const [user, setUser] = useState<User | null>(null)
     const router = useRouter()
 
     useEffect(() => {
@@ -37,13 +39,25 @@ export default function TodoApp() {
 
         fetchUser()
 
-        const subscription = supabase
-            .channel('public:todos')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'todos' }, handleRealtimeUpdate)
+        const channel = supabase
+            .channel('any')
+            .on('broadcast', { event: 'todos' }, (payload) => {
+                console.log('Broadcast received:', payload)
+                // Handle broadcast message here
+            })
+            .on(
+                'postgres_changes',
+                {
+                    event: '*',
+                    schema: 'public',
+                    table: 'todos',
+                },
+                (payload: RealtimePostgresChangesPayload<Todo>) => handleRealtimeUpdate(payload)
+            )
             .subscribe()
 
         return () => {
-            subscription.unsubscribe()
+            channel.unsubscribe()
         }
     }, [router])
 
@@ -62,18 +76,18 @@ export default function TodoApp() {
         }
     }
 
-    const handleRealtimeUpdate = (payload: any) => {
+    const handleRealtimeUpdate = (payload: RealtimePostgresChangesPayload<Todo>) => {
         console.log('Realtime update received:', payload)
         const { eventType, new: newRecord, old: oldRecord } = payload
 
         setTodos((currentTodos) => {
             switch (eventType) {
                 case 'INSERT':
-                    return [...currentTodos, newRecord].sort((a, b) => a.id - b.id)
+                    return [...currentTodos, newRecord!].sort((a, b) => a.id - b.id)
                 case 'UPDATE':
-                    return currentTodos.map((todo) => todo.id === newRecord.id ? newRecord : todo)
+                    return currentTodos.map((todo) => todo.id === newRecord!.id ? newRecord! : todo)
                 case 'DELETE':
-                    return currentTodos.filter((todo) => todo.id !== oldRecord.id)
+                    return currentTodos.filter((todo) => todo.id !== oldRecord!.id)
                 default:
                     return currentTodos
             }
@@ -97,7 +111,7 @@ export default function TodoApp() {
         if (newTodo.trim() !== "" && user) {
             const { error } = await supabase
                 .from('todos')
-                .insert([{ text: newTodo, user_id: user?.id, completed: false }])
+                .insert([{ text: newTodo, user_id: user.id, completed: false }])
 
             if (error) {
                 console.error('Error adding todo:', error)
